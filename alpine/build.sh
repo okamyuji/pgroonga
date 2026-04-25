@@ -3,28 +3,30 @@ set -eux
 
 PGROONGA_VERSION=$1
 GROONGA_VERSION=$2
+MECAB_VERSION=$3
+MECAB_IPADIC_VERSION=$4
 
 # Build and install MeCab
 cd /tmp
-wget "https://github.com/shogo82148/mecab/releases/download/v0.996.12/mecab-0.996.12.tar.gz"
-tar xf mecab-0.996.12.tar.gz
-cd mecab-0.996.12
+wget "https://github.com/shogo82148/mecab/releases/download/v${MECAB_VERSION}/mecab-${MECAB_VERSION}.tar.gz"
+tar xf "mecab-${MECAB_VERSION}.tar.gz"
+cd "mecab-${MECAB_VERSION}"
 ./configure --prefix=/usr/local --with-charset=utf8
 make
 make install
 cd /tmp
-rm -rf mecab-0.996.12 mecab-0.996.12.tar.gz
+rm -rf "mecab-${MECAB_VERSION}" "mecab-${MECAB_VERSION}.tar.gz"
 
 # Build and install MeCab IPA dictionary
 cd /tmp
-wget "https://github.com/shogo82148/mecab/releases/download/v0.996.12/mecab-ipadic-2.7.0-20070801.tar.gz"
-tar xf mecab-ipadic-2.7.0-20070801.tar.gz
-cd mecab-ipadic-2.7.0-20070801
+wget "https://github.com/shogo82148/mecab/releases/download/v${MECAB_VERSION}/mecab-ipadic-${MECAB_IPADIC_VERSION}.tar.gz"
+tar xf "mecab-ipadic-${MECAB_IPADIC_VERSION}.tar.gz"
+cd "mecab-ipadic-${MECAB_IPADIC_VERSION}"
 ./configure --prefix=/usr/local --with-charset=utf8 --with-mecab-config=/usr/local/bin/mecab-config
 make
 make install
 cd /tmp
-rm -rf mecab-ipadic-2.7.0-20070801 mecab-ipadic-2.7.0-20070801.tar.gz
+rm -rf "mecab-ipadic-${MECAB_IPADIC_VERSION}" "mecab-ipadic-${MECAB_IPADIC_VERSION}.tar.gz"
 
 # Build and install Groonga with MeCab support
 cd /tmp

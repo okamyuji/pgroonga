@@ -2,7 +2,9 @@
 FROM postgres:17-alpine AS builder
 
 ENV PGROONGA_VERSION=4.0.4 \
-    GROONGA_VERSION=15.1.7
+    GROONGA_VERSION=15.1.7 \
+    MECAB_VERSION=0.996.12 \
+    MECAB_IPADIC_VERSION=2.7.0-20070801
 
 COPY alpine/build.sh /
 RUN chmod +x /build.sh && \
@@ -25,7 +27,7 @@ RUN chmod +x /build.sh && \
     xxhash-dev \
     zlib-dev \
     zstd-dev && \
-  /build.sh ${PGROONGA_VERSION} ${GROONGA_VERSION}
+  /build.sh ${PGROONGA_VERSION} ${GROONGA_VERSION} ${MECAB_VERSION} ${MECAB_IPADIC_VERSION}
 
 # 実行ステージ
 FROM postgres:17-alpine
