@@ -3,9 +3,19 @@
  * PGroonga全文検索API実装例（Express + PostgreSQL）
  */
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const { Pool } = require('pg');
 
 const app = express();
+
+// レートリミット: DBアクセスを伴う検索APIの乱用を防止
+const limiter = rateLimit({
+  windowMs: 60 * 1000, // 1分
+  max: 60,             // 1分あたり60リクエストまで
+  standardHeaders: true,
+  legacyHeaders: false
+});
+app.use(limiter);
 const pool = new Pool({
   host: 'localhost',
   port: 5432,
