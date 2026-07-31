@@ -6,6 +6,7 @@ from fastapi import FastAPI, Query, HTTPException
 from typing import List, Optional
 from datetime import datetime
 import asyncpg
+import os
 from pydantic import BaseModel
 
 app = FastAPI(title="PGroonga Search API")
@@ -27,13 +28,16 @@ class PaginatedSearchResult(BaseModel):
 
 
 async def get_db_connection():
-    """データベース接続を取得"""
+    """データベース接続を取得
+
+    フォールバック値はcompose.yamlのlocalhost検証用設定。本番は環境変数で上書きする。
+    """
     return await asyncpg.connect(
-        host='localhost',
-        port=5432,
-        user='postgres',
-        password='password',
-        database='postgres'
+        host=os.environ.get('PGHOST', 'localhost'),
+        port=int(os.environ.get('PGPORT', '5432')),
+        user=os.environ.get('PGUSER', 'postgres'),
+        password=os.environ.get('PGPASSWORD', 'password'),
+        database=os.environ.get('PGDATABASE', 'postgres')
     )
 
 

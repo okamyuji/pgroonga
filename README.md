@@ -76,7 +76,7 @@ uvicorn search_api:app --reload
 ### Node.js (Express)
 
 ```bash
-npm install express pg
+npm install express pg express-rate-limit
 node search_api.js
 ```
 
