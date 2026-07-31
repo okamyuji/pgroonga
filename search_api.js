@@ -16,12 +16,15 @@ const limiter = rateLimit({
   legacyHeaders: false
 });
 app.use(limiter);
+// DB接続設定は環境変数から取得する。
+// フォールバック値は compose.yaml の POSTGRES_* と揃えた localhost 検証専用の値であり、
+// 本番環境では必ず環境変数で上書きすること。
 const pool = new Pool({
-  host: 'localhost',
-  port: 5432,
-  user: 'postgres',
-  password: 'password',
-  database: 'postgres'
+  host: process.env.PGHOST ?? 'localhost',
+  port: parseInt(process.env.PGPORT ?? '5432', 10),
+  user: process.env.PGUSER ?? 'postgres',
+  password: process.env.PGPASSWORD ?? 'password',
+  database: process.env.PGDATABASE ?? 'postgres'
 });
 
 app.use(express.json());

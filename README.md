@@ -82,6 +82,12 @@ node search_api.js
 
 同様のエンドポイントを提供します。
 
+DB接続情報は環境変数 `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` / `PGDATABASE` で上書きできます（未指定時は compose.yaml のlocalhost検証用の値にフォールバック）。
+
+```bash
+PGPASSWORD=your-password node search_api.js
+```
+
 ## パフォーマンス
 
 - **1000万件データでの実測値:**
