@@ -24,15 +24,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # DL3018はapkのバージョン固定を求めるが、この構成はベースイメージの
+      # Alpineが提供する版に追随する方針なので固定しない
       - name: Lint Dockerfiles
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: Dockerfile
+          ignore: DL3018
 
       - name: Lint bench Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: bench/Dockerfile
+          ignore: DL3018
 
       - name: Lint shell scripts
         run: |

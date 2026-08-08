@@ -32,8 +32,10 @@ DOCS=(
   "コンピュータの性能を計測する"
   "東京都の人口は増えています"
   "世田谷の食堂"
+  "東京都千代田区に住んでいます"
 )
 QUERIES=(渋谷 ラーメン 東京 東京都 人口 性能 コンピュータ)
+PG_NAME="${PG_NAME:-pgroonga-postgres}"
 
 echo "=== 投入する文書 ==="
 for i in "${!DOCS[@]}"; do echo "  doc:$((i + 1))  ${DOCS[$i]}"; done
@@ -57,14 +59,63 @@ sleep 3
 
 hits() { docker exec "$1" "$2" FT.SEARCH "$3" "$4" NOCONTENT | head -1; }
 
-printf '%-14s %-14s %-16s %s\n' "検索語" "Valkey既定" "Redis既定" "Redis(CHINESE)"
+# PGroongaが動いていれば同じ文書と同じ検索語で比較する
+pg_ready=0
+if docker exec "$PG_NAME" pg_isready -U postgres >/dev/null 2>&1; then
+  pg_ready=1
+  {
+    echo "CREATE TABLE IF NOT EXISTS cjk_check (id int PRIMARY KEY, content text);"
+    echo "CREATE INDEX IF NOT EXISTS idx_cjk_check ON cjk_check"
+    echo "  USING pgroonga (content)"
+    echo "  WITH (tokenizer='TokenMecab', normalizer='NormalizerNFKC150');"
+    echo "TRUNCATE cjk_check;"
+    for i in "${!DOCS[@]}"; do
+      echo "INSERT INTO cjk_check VALUES ($((i + 1)), '${DOCS[$i]}');"
+    done
+  } | docker exec -i "$PG_NAME" psql -U postgres -q >/dev/null
+fi
+
+pg_hits() {
+  if [ "$pg_ready" -eq 1 ]; then
+    docker exec -i "$PG_NAME" psql -U postgres -tAc \
+      "SELECT count(*) FROM cjk_check WHERE content &@~ '$1'"
+  else
+    echo "-"
+  fi
+}
+
+printf '%-14s %-12s %-12s %-16s %s\n' \
+  "検索語" "Valkey既定" "Redis既定" "Redis(CHINESE)" "PGroonga"
 for q in "${QUERIES[@]}"; do
-  printf '%-14s %-14s %-16s %s\n' \
+  printf '%-14s %-12s %-12s %-16s %s\n' \
     "$q" \
     "$(hits "$VALKEY_NAME" valkey-cli jaidx "$q")件" \
     "$(hits "$REDIS_NAME" redis-cli jaidx "$q")件" \
-    "$(hits "$REDIS_NAME" redis-cli zhidx "$q")件"
+    "$(hits "$REDIS_NAME" redis-cli zhidx "$q")件" \
+    "$(pg_hits "$q")件"
 done
+
+echo
+echo "=== Valkeyで返る条件（完全一致と前方一致） ==="
+for q in "東京" "東京都千代田区に住んでいます" "東京*"; do
+  printf '  FT.SEARCH jaidx "%s" → %s件\n' \
+    "$q" "$(hits "$VALKEY_NAME" valkey-cli jaidx "$q")"
+done
+
+echo
+echo "=== Redis(CHINESE)でかなと辞書外の漢字が落ちる例 ==="
+for q in 増え います きのう; do
+  printf '  FT.SEARCH zhidx "%s" → %s件\n' \
+    "$q" "$(hits "$REDIS_NAME" redis-cli zhidx "$q")"
+done
+
+if [ "$pg_ready" -eq 1 ]; then
+  echo
+  echo "=== MeCabによる分割 ==="
+  for s in "東京都の人口は増えています" "きのう渋谷でラーメンを食べました"; do
+    printf '  %s\n' "$(docker exec "$PG_NAME" sh -c "echo '$s' | mecab -Owakati")"
+  done
+fi
 
 echo
 echo "=== Redisの中国語分割器が日本語をどう切るか ==="
