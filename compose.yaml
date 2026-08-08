@@ -23,6 +23,39 @@ services:
       retries: 5
     shm_size: 128mb
 
+  valkey:
+    image: valkey/valkey:9-alpine
+    container_name: pgroonga-valkey
+    ports:
+      - "6379:6379"
+    # キャッシュ用途なので永続化は切り、上限到達時は参照の古いキーから捨てる
+    command: >
+      valkey-server
+      --save ""
+      --appendonly no
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  bench:
+    build:
+      context: ./bench
+    container_name: pgroonga-bench
+    profiles: ["bench"]
+    environment:
+      BENCH_DSN: postgresql://postgres:password@pgroonga:5432/postgres
+      BENCH_CACHE_URL: redis://valkey:6379/0
+    depends_on:
+      pgroonga:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+
 volumes:
   postgres-data:
     driver: local

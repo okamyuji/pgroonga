@@ -1,61 +1,155 @@
 # PGroonga + MeCab 日本語全文検索環境
 
-PostgreSQL 17 + PGroonga + MeCabによる高精度な日本語全文検索環境をDockerで構築します。
+PostgreSQL 17とPGroongaとMeCabによる日本語全文検索環境をDockerで構築します。検索結果のキャッシュ層としてValkeyを同梱し、キャッシュの有無による応答時間の差を計測できます。
 
 ## 特徴
 
-- ✅ **高精度な日本語検索**: MeCab形態素解析による名詞・動詞・形容詞の正確な認識
-- ✅ **大規模データ対応**: 1000万件のデータで実証済み
-- ✅ **高速ページネーション**: シーク法による一定の応答時間（30〜50ms）
-- ✅ **多言語対応**: 日本語・英語・中国語など複数言語の検索をサポート
-- ✅ **完全再現可能**: Docker Composeで環境構築が完結
+- MeCabの形態素解析により、名詞・動詞・形容詞を単語単位で索引します
+- 1000万件のサンプルデータで動作を確認できます
+- シーク法のページネーションにより、深いページでも応答時間が一定に保たれます
+- 日本語・英語・中国語をトークナイザーの使い分けで検索できます
+- 検索結果をValkeyにキャッシュする構成と、その効果を測る計測スクリプトを同梱しています
 
 ## クイックスタート
 
 ```bash
-# リポジトリをクローン
 git clone https://github.com/okamyuji/pgroonga.git
 cd pgroonga
 
-# コンテナを起動（初回は10-15分かかります）
+# 初回はMeCabとGroongaをソースからビルドするため時間がかかります
 docker compose up -d
 
 # PostgreSQLに接続
 docker exec -it pgroonga-postgres psql -U postgres
+```
 
-# 検索例
+```sql
 SELECT title FROM blog_posts WHERE title &@~ '開発' LIMIT 10;
 ```
+
+`docker compose up`はblog_postsに1000万件を投入します。ディスクと時間を消費するため、件数を減らしたい場合は`init/02-sample-data.sql`の`generate_series`の上限を変更してください。
 
 ## 構成
 
 ```shell
 pgroonga/
-├── Dockerfile              # マルチステージビルド（Alpine base）
-├── compose.yaml            # Docker Compose設定
+├── Dockerfile              # マルチステージビルド（Alpineベース）
+├── compose.yaml            # PostgreSQLとValkeyとベンチマークの定義
 ├── alpine/
-│   └── build.sh           # MeCab, Groonga, PGroongaのビルドスクリプト
+│   └── build.sh            # MeCab, Groonga, PGroongaのビルドスクリプト
 ├── init/
-│   ├── 01-pgroonga-setup.sql  # 初期テーブル作成
+│   ├── 01-pgroonga-setup.sql  # テーブルとインデックスの作成
 │   └── 02-sample-data.sql     # 1000万件のサンプルデータ生成
-├── search_api.py          # FastAPI実装例
-└── search_api.js          # Express実装例
+├── bench/
+│   ├── bench.py            # キャッシュ有無の応答時間を比較する計測スクリプト
+│   ├── cjk_check.sh        # Valkey/Redisの日本語検索の挙動を確認する
+│   └── Dockerfile          # 計測スクリプトの実行環境
+├── search_api.py           # FastAPI実装例
+└── search_api.js           # Express実装例
 ```
 
 ## バージョン
 
-- PostgreSQL: 17
-- PGroonga: 4.0.4
-- Groonga: 15.1.7
-- MeCab: 0.996.12 (IPA辞書)
+- PostgreSQL: 17（Alpineベースイメージ）
+- PGroonga: 4.0.8
+- Groonga: 16.0.9
+- MeCab: 0.996.12（IPA辞書 2.7.0-20070801）
+- Valkey: 9
+
+PGroongaは4.0.6以降Mesonでビルドします。`alpine/build.sh`は`meson setup`に`-Dtest=false`を渡しており、これを外すとテスト用のRuby gemを要求されて設定段階で停止します。
+
+clangとllvmのメジャー版は`postgresql17-dev`の依存に合わせる必要があります。ベースイメージのAlpineを上げるときは`apk info -R postgresql17-dev`で確認し、Dockerfileの`ARG LLVM_VERSION`を合わせてください。
 
 ## データ量
 
-初期セットアップで自動的に以下のデータが投入されます:
+初期セットアップで次のデータが投入されます。
 
-- **blog_posts**: 10,000,000件（1000万件）
-- 検索インデックス: PGroonga + MeCab
+- blog_posts: 10,000,000件
+- 全文検索インデックス: PGroonga（TokenMecab、NormalizerNFKC150）
 - ページネーション用インデックス: B-tree複合インデックス
+
+## キャッシュ層
+
+`compose.yaml`のvalkeyサービスは永続化を切り、上限に達したら参照の古いキーから捨てる設定にしています。キャッシュとしてのみ使い、失われても検索結果はPostgreSQLから作り直せるためです。
+
+```yaml
+--save ""
+--appendonly no
+--maxmemory 256mb
+--maxmemory-policy allkeys-lru
+```
+
+### 計測の実行
+
+```bash
+docker compose --profile bench run --rm bench
+```
+
+同一の検索語の列を3つの方式で流し、応答時間の分布とPostgreSQLへの問い合わせ回数を出力します。
+
+- nocache: キャッシュを使わず毎回PostgreSQLへ問い合わせる基準線
+- naive: TTLキャッシュのみ。失効直後は全リクエストがDBへ流れます
+- local-lock: プロセス内の排他のみ。アプリのインスタンス数だけDBクエリが並びます
+- dist-lock: Valkey上の分散ロックで再構築を1本に絞ります
+- swr: 論理期限が切れている間は古い結果を返し、裏で1本だけ再構築します
+
+事前にキャッシュを入れてから期限を切らせ、その直後に同一の検索語へ一斉アクセスさせます。キャッシュが空の状態から始めるのではなく、あったものが消えた瞬間を再現するためです。基準線のnocacheも他と同じ並列度で測ります。直列のnocacheと並列のnaiveを比べると、キャッシュを入れると遅くなるという誤った読み方になります。
+
+Valkeyに到達できない場合は、リクエストを失敗させずPostgreSQLへ直行します。速くするために足したキャッシュが単一障害点になっては本末転倒だからです。動作を確かめるにはValkeyを停止した状態で実行します。
+
+```bash
+docker stop pgroonga-valkey
+docker compose --profile bench run --rm bench
+```
+
+環境変数で条件を変えられます。
+
+| 変数 | 既定値 | 意味 |
+|---|---|---|
+| `BENCH_PROCESSES` | 4 | アプリのインスタンス数に相当するプロセス数 |
+| `BENCH_THREADS` | 4 | 1インスタンスあたりの同時リクエスト数 |
+| `BENCH_REQUESTS_PER_THREAD` | 3 | 1スレッドあたりの実行回数 |
+| `BENCH_MODES` | 全方式 | 実行する方式をカンマ区切りで指定します |
+| `BENCH_HOT_KEYWORD` | 全文検索 | 一斉アクセスを集中させる検索語 |
+| `BENCH_CACHE_TTL` | 60 | キャッシュの有効期間（秒） |
+| `BENCH_LOCK_TTL_MS` | 30000 | 分散ロックの保持期限（ミリ秒） |
+| `BENCH_LOCK_WAIT_MS` | 20000 | 再構築を待つ上限（ミリ秒） |
+| `BENCH_STALE_TTL` | 600 | 古い結果を保持する物理TTL（秒） |
+
+### 実測値
+
+Apple M3 Pro、Dockerに2 CPUと4GBを割り当てた環境での結果です。検索語「全文検索」は約50万件にヒットし、これに`ORDER BY view_count DESC`と`count(*)`がかかるため、キャッシュを外した1回の検索は秒単位になります。小さいインスタンスでの値なので、絶対値はそのままでは一般化できません。
+
+| 方式 | DB実行回数 | DBの同時実行 | p50 | p95 | p99 | 所要時間 |
+|---|---|---|---|---|---|---|
+| nocache | 48 | 24 | 4529ms | 8793ms | 9207ms | 16.4秒 |
+| naive | 16 | 24 | 2.5ms | 3688ms | 5276ms | 5.3秒 |
+| local-lock | 4 | 11 | 0.9ms | 1865ms | 1918ms | 2.0秒 |
+| dist-lock | 1 | 6 | 3.2ms | 1499ms | 1540ms | 1.6秒 |
+| swr | 1 | 6 | 3.1ms | 296ms | 308ms | 1.6秒 |
+
+「DBの同時実行」は`pg_stat_activity`で数えたバックエンドの本数です。`max_parallel_workers_per_gather`が2なので、1本の検索が最大3バックエンドを使います。
+
+### ページネーションの実測値
+
+同じ環境で`title &@~ '開発'`を1ページ10件で取得した結果です。
+
+| ページ | OFFSET法 | シーク法 |
+|---|---|---|
+| 1ページ目 | 177ms | 112ms |
+| 11ページ目 | 174ms | 71ms |
+| 101ページ目 | 5237ms | 69ms |
+| 1001ページ目 | 4015ms | 69ms |
+
+OFFSET法は101ページ目で実行計画が変わり、捨てる行を数えるために全体を並べ直します。シーク法は深さによらず一定です。
+
+### Valkey/Redisの日本語検索の確認
+
+```bash
+./bench/cjk_check.sh
+```
+
+ValkeyとRedisのコンテナを起動し、同じ日本語文書に対して同じ検索語を投げた結果を並べて出します。どちらも日本語の形態素解析器を持たないため、全文検索そのものを移す用途には使えないことを確認できます。
 
 ## API実装例
 
@@ -66,12 +160,12 @@ pip install fastapi uvicorn asyncpg pydantic
 uvicorn search_api:app --reload
 ```
 
-**エンドポイント:**
+エンドポイントは次のとおりです。
 
-- `GET /search` - 基本検索
-- `GET /search/paginated` - シーク法ページネーション
-- `GET /search/by-tags` - タグ検索
-- `GET /suggest` - オートコンプリート
+- `GET /search` 基本検索
+- `GET /search/paginated` シーク法ページネーション
+- `GET /search/by-tags` タグ検索
+- `GET /suggest` オートコンプリート
 
 ### Node.js (Express)
 
@@ -80,35 +174,22 @@ npm install express pg express-rate-limit
 node search_api.js
 ```
 
-同様のエンドポイントを提供します。
+同じエンドポイントを提供します。
 
-DB接続情報は環境変数 `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` / `PGDATABASE` で上書きできます（未指定時は compose.yaml のlocalhost検証用の値にフォールバック）。
+DB接続情報は環境変数`PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` / `PGDATABASE`で上書きできます。未指定のときはcompose.yamlの検証用の値を使います。
 
 ```bash
 PGPASSWORD=your-password node search_api.js
 ```
-
-## パフォーマンス
-
-- **1000万件データでの実測値:**
-
-| ページ | OFFSET法 | シーク法 | 改善率 |
-|--------|---------|---------|--------|
-| 1ページ目 | 42ms | 42ms | - |
-| 11ページ目 | 42ms | 39ms | 7% |
-| 101ページ目 | **2.2秒** | 47ms | **98%** |
-| 1001ページ目 | **2.4秒** | 47ms | **98%** |
-
-- **推奨: OFFSET 1000以上ではシーク法必須**
 
 ## 主要なSQLクエリ
 
 ### 基本検索
 
 ```sql
-SELECT title FROM blog_posts 
-WHERE title &@~ '開発' 
-ORDER BY published_at DESC 
+SELECT title FROM blog_posts
+WHERE title &@~ '開発'
+ORDER BY published_at DESC
 LIMIT 10;
 ```
 
@@ -116,18 +197,18 @@ LIMIT 10;
 
 ```sql
 -- 1ページ目
-SELECT title, published_at, id 
-FROM blog_posts 
+SELECT title, published_at, id
+FROM blog_posts
 WHERE title &@~ '開発'
-ORDER BY published_at DESC, id DESC 
+ORDER BY published_at DESC, id DESC
 LIMIT 10;
 
--- 2ページ目以降
-SELECT title, published_at, id 
-FROM blog_posts 
+-- 2ページ目以降は直前の行の値を境界にする
+SELECT title, published_at, id
+FROM blog_posts
 WHERE title &@~ '開発'
   AND (published_at, id) < ('2025-10-12 13:27:05', 9999026)
-ORDER BY published_at DESC, id DESC 
+ORDER BY published_at DESC, id DESC
 LIMIT 10;
 ```
 
@@ -144,14 +225,10 @@ ORDER BY view_count DESC;
 ### 多言語検索
 
 ```sql
--- 日本語検索
-SELECT title, content 
-FROM blog_posts 
+SELECT title, content FROM blog_posts
 WHERE lang = 'ja' AND content &@~ '全文検索';
 
--- 英語検索
-SELECT title, content 
-FROM blog_posts 
+SELECT title, content FROM blog_posts
 WHERE lang = 'en' AND content &@~ 'search';
 ```
 
@@ -166,7 +243,7 @@ VACUUM ANALYZE blog_posts;
 ### インデックスサイズ確認
 
 ```sql
-SELECT 
+SELECT
   relname AS tablename,
   indexrelname,
   pg_size_pretty(pg_relation_size(indexrelid)) AS index_size
@@ -178,10 +255,7 @@ ORDER BY pg_relation_size(indexrelid) DESC;
 ### バックアップ
 
 ```bash
-# 論理バックアップ
 docker exec pgroonga-postgres pg_dump -U postgres -Fc postgres > backup.dump
-
-# リストア
 docker exec -i pgroonga-postgres pg_restore -U postgres -d postgres < backup.dump
 ```
 
@@ -206,36 +280,50 @@ docker exec pgroonga-postgres sh -c "echo '日本語の形態素解析' | mecab"
 docker logs pgroonga-postgres
 ```
 
+### apk addでclangやllvmが見つからない
+
+ベースイメージのAlpineが上がり、Dockerfileの`ARG LLVM_VERSION`が指すメジャー版が配布から外れた状態です。`apk info -R postgresql17-dev`が依存している版に合わせてください。
+
+### Groongaのビルドがxsimd関連のエラーで止まる
+
+Alpineのxsimdとgroongaの対応版がずれています。`GROONGA_VERSION`を新しい版へ上げてください。
+
+### PGroongaのビルドがmakefileなしで止まる
+
+`No targets specified and no makefile found`が出る場合、PGXSのMakefileが廃止された4.0.6以降のtarballをmakeで処理しようとしています。`alpine/build.sh`のMeson経路を使ってください。
+
 ## クラウドデプロイ
 
-### 対応サービス
+マネージドのPostgreSQLではPGroongaを導入できないため、コンテナベースのデプロイが必要です。
 
-- ✅ Supabase (カスタム拡張対応)
-- ✅ Render (Dockerデプロイ)
-- ✅ Fly.io (カスタムコンテナ)
-- ✅ Railway (Dockerサポート)
-- ❌ AWS RDS (非対応)
-- ❌ GCP Cloud SQL (非対応)
-- ❌ Azure Database (非対応)
-
-**マネージドPostgreSQLではPGroongaが使えません。コンテナベースのデプロイが必須です。**
+| サービス | 可否 |
+|---|---|
+| Supabase | カスタム拡張に対応しているため利用できます |
+| Render | Dockerデプロイで利用できます |
+| Fly.io | カスタムコンテナで利用できます |
+| Railway | Dockerのサポートがあるため利用できます |
+| AWS RDS | 利用できません |
+| GCP Cloud SQL | 利用できません |
+| Azure Database | 利用できません |
 
 ## ライセンス
 
-このプロジェクトで使用しているソフトウェアのライセンス
+このプロジェクトで使用しているソフトウェアのライセンスは次のとおりです。
 
 - PostgreSQL: PostgreSQL License
 - PGroonga: Apache License 2.0
 - Groonga: LGPL 2.1
 - MeCab: BSD-3-Clause
+- Valkey: BSD-3-Clause
 
 ## 参考資料
 
 - [PGroonga公式ドキュメント](https://pgroonga.github.io/ja/)
 - [Groonga公式サイト](https://groonga.org/ja/)
 - [MeCab公式サイト](https://taku910.github.io/mecab/)
+- [Valkey公式ドキュメント](https://valkey.io/topics/)
 - [Use The Index, Luke - ページネーション](https://use-the-index-luke.com/ja/sql/partial-results/fetch-next-page)
 
 ## サポート
 
-Issues and Pull Requestsを歓迎します。
+IssuesとPull Requestsを歓迎します。

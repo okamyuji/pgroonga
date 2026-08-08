@@ -46,13 +46,17 @@ cd /tmp
 rm -rf "groonga-${GROONGA_VERSION}" "groonga-${GROONGA_VERSION}.tar.gz" groonga.build
 
 # Build and install PGroonga
+# 4.0.6でPGXSのMakefile（pgroonga.mk）が削除され、ビルド方式がMesonのみになった。
+# test=falseにしないとRubyのテスト用gemを要求されてsetupが止まる。
 cd /tmp
 wget "https://packages.groonga.org/source/pgroonga/pgroonga-${PGROONGA_VERSION}.tar.gz"
 tar xf "pgroonga-${PGROONGA_VERSION}.tar.gz"
 cd "pgroonga-${PGROONGA_VERSION}"
-make HAVE_MSGPACK=1 HAVE_XXHASH=1 \
-  PG_CPPFLAGS="-I/usr/local/include/groonga -DPGRN_VERSION='\"${PGROONGA_VERSION}\"'" \
-  SHLIB_LINK="-L/usr/local/lib -lgroonga"
-make install
+meson setup ../pgroonga.build . \
+  --prefix=/usr/local \
+  --buildtype=release \
+  -Dtest=false
+meson compile -C ../pgroonga.build
+meson install -C ../pgroonga.build
 cd /tmp
-rm -rf "pgroonga-${PGROONGA_VERSION}" "pgroonga-${PGROONGA_VERSION}.tar.gz"
+rm -rf "pgroonga-${PGROONGA_VERSION}" "pgroonga-${PGROONGA_VERSION}.tar.gz" pgroonga.build

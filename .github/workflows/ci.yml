@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security:
+    uses: okamyuji/reusable-workflows/.github/workflows/security-scan.yml@v1
+    permissions:
+      contents: read
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Lint Dockerfiles
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+
+      - name: Lint bench Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: bench/Dockerfile
+
+      - name: Lint shell scripts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck alpine/build.sh bench/cjk_check.sh
+
+      - name: Lint Python
+        run: |
+          pipx install ruff
+          ruff check bench/
+          ruff format --check bench/
+
+      - name: Validate compose file
+        run: docker compose config --quiet
+
+  build-image:
+    runs-on: ubuntu-latest
+    # MeCabとGroongaをソースからビルドするため長めに取る
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build PGroonga image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: pgroonga-ci:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify MeCab tokenizer works
+        run: |
+          docker run -d --name pg -e POSTGRES_PASSWORD=password \
+            -v "$PWD/init:/docker-entrypoint-initdb.d" pgroonga-ci:latest
+          for _ in $(seq 1 60); do
+            docker exec pg pg_isready -U postgres >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker exec pg psql -U postgres -c "SELECT extversion FROM pg_extension WHERE extname='pgroonga'"
+          docker exec pg psql -U postgres -tAc \
+            "SELECT count(*) FROM pgroonga_sample WHERE content &@~ '日本語'"

@@ -1,8 +1,13 @@
 # ビルドステージ
 FROM postgres:17-alpine AS builder
 
-ENV PGROONGA_VERSION=4.0.4 \
-    GROONGA_VERSION=15.1.7 \
+# postgresqlNN-dev が依存する clang/llvm と同じメジャー版を指定する。
+# ずれると PostgreSQL の JIT 用ビットコード生成でリンクが壊れるため、
+# ベースイメージの Alpine を上げるときは apk info -R postgresql17-dev で確認して合わせる。
+ARG LLVM_VERSION=20
+
+ENV PGROONGA_VERSION=4.0.8 \
+    GROONGA_VERSION=16.0.9 \
     MECAB_VERSION=0.996.12 \
     MECAB_IPADIC_VERSION=2.7.0-20070801
 
@@ -11,12 +16,13 @@ RUN chmod +x /build.sh && \
   apk add --no-cache \
     apache-arrow-dev \
     build-base \
-    clang19-dev \
+    clang${LLVM_VERSION}-dev \
     cmake \
     gettext-dev \
     linux-headers \
-    llvm19 \
+    llvm${LLVM_VERSION} \
     lz4-dev \
+    meson \
     msgpack-c-dev \
     postgresql-dev \
     rapidjson-dev \
@@ -32,9 +38,9 @@ RUN chmod +x /build.sh && \
 # 実行ステージ
 FROM postgres:17-alpine
 
-ENV PGROONGA_VERSION=4.0.4 \
-    GROONGA_VERSION=15.1.7 \
-    LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+ENV PGROONGA_VERSION=4.0.8 \
+    GROONGA_VERSION=16.0.9 \
+    LD_LIBRARY_PATH=/usr/local/lib
 
 # ランタイム依存関係のインストール
 RUN apk add --no-cache \
