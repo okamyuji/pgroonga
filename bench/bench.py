@@ -586,15 +586,16 @@ def main() -> int:
     # p99は載せない。1バーストあたり48件では99パーセンタイルが最遅の1件と
     # 一致してしまい、分位点としての意味を持たない。失効時の尾は
     # 「遅い側が何件出たか」と「各バーストの最遅値」で見る
+    slow_label = f"{SLOW_THRESHOLD_MS:.0f}ms超"
     header = (
         f"{'方式':<11}{'DB検索':>7}{'DB同時':>7}{'req':>6}"
-        f"{'p50ms':>9}{'1秒超':>7}{'最大ms':>10}{'所要秒':>8}  バースト毎の最遅"
+        f"{'p50ms':>9}{slow_label:>9}{'最大ms':>10}{'所要秒':>8}  バースト毎の最遅"
     )
     print(header)
     for r in results:
         print(
             f"{r['mode']:<11}{r['db_queries']:>7}{r['max_db_concurrency']:>7}"
-            f"{r['requests']:>6}{r['p50']:>9}{r['slow_requests']:>7}"
+            f"{r['requests']:>6}{r['p50']:>9}{r['slow_requests']:>9}"
             f"{r['max']:>10}{r['wall_seconds']:>8}  {r['burst_max']}"
         )
     print()
