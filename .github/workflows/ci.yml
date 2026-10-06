@@ -15,12 +15,12 @@ concurrency:
 
 jobs:
   security:
-    uses: okamyuji/reusable-workflows/.github/workflows/security-scan.yml@v1
+    uses: okamyuji/reusable-workflows/.github/workflows/security-scan.yml@test/ubuntu-26.04
     permissions:
       contents: read
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 
@@ -54,7 +54,7 @@ jobs:
         run: docker compose config --quiet
 
   build-image:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # MeCabとGroongaをソースからビルドするため長めに取る
     timeout-minutes: 60
     steps:
